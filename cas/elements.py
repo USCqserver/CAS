@@ -21,9 +21,9 @@ from scipy.linalg import expm
 import scipy.sparse.linalg as sprsalg
 from scipy import sparse, interpolate
 
-from utils import H_PLANCK, PHI_0, E_CHARGE
-from utils import multi_krons, basis_vec
-from utils import e_j, e_c, e_l
+from cas.utils import H_PLANCK, PHI_0, E_CHARGE
+from cas.utils import multi_krons, basis_vec
+from cas.utils import e_j, e_c, e_l
 
 warnings.filterwarnings("ignore", message="splu requires CSC matrix format")
 warnings.filterwarnings(

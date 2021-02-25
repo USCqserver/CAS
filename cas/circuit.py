@@ -15,9 +15,9 @@ import scipy.sparse.linalg as sprsalg
 from scipy import sparse, interpolate
 import lmfit
 
-from utils import multi_krond, multi_krons, basis_vec, _b
-from elements import CSFQ, Coupler
-from utils import e_j, e_c, e_l
+from cas.utils import multi_krond, multi_krons, basis_vec, _b
+from cas.elements import CSFQ, Coupler
+from cas.utils import e_j, e_c, e_l
 
 warnings.filterwarnings("ignore", message="splu requires CSC matrix format")
 warnings.filterwarnings(
