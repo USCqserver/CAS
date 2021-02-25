@@ -26,7 +26,7 @@ warnings.filterwarnings(
 )
 
 
-class MultiQubit:
+class AnnealingCircuit:
     """Construct a circuit consisting of multiple flux qubits and couplers.
     This circuit object can then be used to extract system properties such
     as Ising coefficients or customized fluxes.
