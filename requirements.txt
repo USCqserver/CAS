@@ -1,0 +1,5 @@
+# list of CAS requirements.
+
+numpy>=1.16
+scipy>=1.3
+lmfit>=1.0
