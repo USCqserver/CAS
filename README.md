@@ -13,8 +13,8 @@ For small circuits (depending on computer memory, typically 4 qubits and 4 coupl
 For larger circuits, the code uses a pairwise-SW approximation to find the circuit biases and Pauli schedules.
 
 ## Examples
-The `/examples/` directory contains jupyter example notebooks that explain how different methods of the module are used.
-The `/examples/cas_paper` includes the notebooks that were used to make the figures and plots of the paper at [link goes here]().
+The [examples](https://github.com/USCqserver/CAS/tree/master/docs/examples) directory contains jupyter example notebooks that explain how different methods of the module are used.
+The [examples/cas_paper](https://github.com/USCqserver/CAS/tree/master/docs/examples/cas_paper) directory includes the notebooks that were used to make the figures and plots of the paper at [link goes here]().
 
 
 ## Contributions
