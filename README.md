@@ -3,6 +3,13 @@
 This is a repo for constructing customized annealing schedules for flux qubits.
 The paper at [link goes here]() details the theory and methods that were used in this codebase.
 
+## Installation
+First clone the repo using `git clone` , which copies all the contents of this package into a directory on your system.
+Next go to the repo directory, e.g., using `cd CAS`.
+Then run `pip install .` to install this package. You can also use `pip install -e .` to install the package in the 'editable' mode, which allows you to edit the source code and makes the changes immediately available for your use.
+
+Before using the `pip install`, it is strongly recommended to create an isolated virtual environment and install the package in that environment. 
+For instructions on creating python virtual environments, please see [this article](https://docs.python-guide.org/dev/virtualenvs/)
 ## Capabilities
 It contains modules that can simulate the circuit model for Capacitively Shunted FLux Qubits (CSFQ) and tunable inductive couplers. 
 It can then construct a circuit containing multiple CSFQs and tunable couplers that are coupled together.
