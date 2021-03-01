@@ -1,2 +1,2 @@
-from cas import circuit
-from cas import elements
+from cas.circuit import *
+from cas.elements import *
