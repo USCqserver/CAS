@@ -1955,3 +1955,446 @@ class AnnealingCircuit:
                 ctr += 1
 
         return sol
+
+    def _initialize_adiabatic(self, phi_dict, save_at=None):
+        phix_all = np.array(
+            [phi_dict["phix_" + str(i)] for i in range(len(self.elements))])
+        phiz_all = np.array(
+            [phi_dict["phiz_" + str(i)] for i in range(len(self.elements))])
+
+        s_ad = np.linspace(0, 1, phi_dict["points"])
+        self.x_interp = interpolate.interp1d(s_ad, phix_all, axis=1,
+                                             kind='linear',
+                                             fill_value='extrapolate')
+        self.z_interp = interpolate.interp1d(s_ad, phiz_all, axis=1,
+                                             kind='linear',
+                                             fill_value='extrapolate')
+
+        if save_at is None:
+            self.save_at = np.linspace(1, 0, phi_dict["points"])
+        else:
+            self.save_at = save_at[::-1]
+
+        ising_size = 2**len(self.qubit_indices)
+        self.hq_list = np.zeros((len(self.save_at), ising_size, ising_size),
+                                dtype='complex')
+        self.U_list = np.zeros((len(self.save_at), ising_size, ising_size),
+                               dtype='complex')
+
+        # calculate some stuff at s=1
+        # single qubit Pauli matrices represented in low energy subspace at s=1
+        self.calculate_quantum(self.x_interp(1), self.z_interp(1),
+                               sparse_htot=True)
+        self.low_pauli_dict_s1 = copy.deepcopy(self.low_pauli_dict)
+        self.low_p0_dict_s1 = copy.deepcopy(self.low_p0_dict)
+        # first 4 eigenstates of the non-interacting system and SW at s=1
+        self.v_0_s1 = copy.deepcopy(self.v_0)
+        self.u_sw_s1 = copy.deepcopy(self.u_sw)
+        self.p0_s1 = self.v_0_s1 @ self.v_0_s1.T.conj()
+
+        return None
+
+    def _joint_index(self, index):
+        joint_index = 0
+        for i, elem in enumerate(index[::-1]):
+            joint_index = joint_index + elem*np.prod(self.trunc_vec[0:i])
+        return joint_index
+
+    def _comp_dot(self, v1, low_e_1, v2, low_e_2):
+        # total inner product
+        inner = 0
+        indices = [range(i) for i in self.trunc_vec]
+        for index1 in product(*indices):
+            for index2 in product(*indices):
+
+                # individual system eigenstate overlaps
+                overlap = 1
+                for i in range(self.trunc_vec.shape[0]):
+                    overlap = low_e_1["v_low_"+str(i)][:, index1[i]].T.conj() @ \
+                              low_e_2["v_low_"+str(i)][:, index2[i]] * \
+                              overlap
+
+                inner = v1[self._joint_index(index1)].conj() * \
+                        v2[self._joint_index(index2)] * \
+                        overlap + \
+                        inner
+        return inner
+
+    def _gram_mats(self, set1, low_e_1, set2, low_e_2):
+        low_e_size = set1.shape[1]
+        inners = np.zeros((low_e_size, low_e_size), dtype='complex')
+        gram_mat = np.zeros((2*low_e_size, 2*low_e_size), dtype='complex')
+        for i, v1 in enumerate(set1.T):
+            for j, v2 in enumerate(set2.T):
+                inners[i, j] = self._comp_dot(v1, low_e_1, v2, low_e_2)
+
+        for i in range(0, low_e_size):
+            gram_mat[i, i] = 1
+            gram_mat[low_e_size::, i] = inners[i, :]
+
+        for i in range(low_e_size, 2*low_e_size):
+            gram_mat[i, i] = 1
+            gram_mat[0:low_e_size, i] = inners[:, i-low_e_size].conj()
+
+        return gram_mat.T
+
+    def _orthogonalized_basis(self, s1, s2):
+        low_e_size = 2**len(self.qubit_indices)
+        basis = np.eye(2*low_e_size, dtype='complex')
+        gram_basis = np.eye(2 * low_e_size, dtype='complex')
+
+        phi_x_vec = self.x_interp(s1)
+        phi_z_vec = self.z_interp(s1)
+        self.calculate_quantum(phi_x_vec, phi_z_vec)
+        set1 = copy.deepcopy(self.u_sw.T.conj() @ self.v_0)
+        low_e_dict_1 = copy.deepcopy(self.low_e_dict)
+
+        phi_x_vec = self.x_interp(s2)
+        phi_z_vec = self.z_interp(s2)
+        self.calculate_quantum(phi_x_vec, phi_z_vec)
+        set2 = copy.deepcopy(self.u_sw.T.conj() @ self.v_0)
+        low_e_dict_2 = copy.deepcopy(self.low_e_dict)
+
+        gram_mat = self._gram_mats(set1, low_e_dict_1,
+                                   set2, low_e_dict_2)
+
+        for i in range(low_e_size, 2*low_e_size):
+            projections = 0
+            for j in range(0, i):
+                projections += (gram_basis[:, j].T.conj() @
+                                gram_mat @
+                                basis[:, i]) * \
+                              gram_basis[:, j]
+
+            gram_basis[:, i] = basis[:, i] - projections
+
+            norm = np.sqrt(gram_basis[:, i].T.conj() @ gram_mat @ gram_basis[:, i])
+            gram_basis[:, i] = gram_basis[:, i]/norm
+
+        return gram_basis, gram_mat
+
+    def _get_generator(self, s1, s2):
+        low_e_size = 2**len(self.qubit_indices)
+        basis = np.eye(2*low_e_size, dtype='complex')
+        orth_basis, metric_mat = self._orthogonalized_basis(s1, s2)
+
+        C = orth_basis.T.conj() @ metric_mat @ basis
+        e_s1, e_s2 = C[:, 0:low_e_size], C[:, low_e_size::]
+        p_s1 = e_s1 @ e_s1.T.conj()
+        p_s2 = e_s2 @ e_s2.T.conj()
+
+        return e_s1, e_s2, p_s1, p_s2
+
+    def _get_Uad(self, delta_s=1e-3, verbose=False):
+        if verbose:
+            print("calculating ODE for adiabatic unitary, starting from s = 1")
+        s_p = np.linspace(1, 0, int(1/delta_s))
+        ising_size = 2**len(self.qubit_indices)
+
+        Uq = np.eye(ising_size)
+        self.U_list[0] = Uq
+        ctr = 1
+        for i, sp in enumerate(s_p[:-1]):
+            e_s, e_sds, p_s, p_sds = self._get_generator(s_p[i], s_p[i+1])
+            # p_prime = (p_sds - p_s) / delta_s
+            # commutator = p_prime @ p_s - p_s @ p_prime
+            # # exponent gets a negative sign cause we propagate backwards
+            # U = expm(-commutator * delta_s)
+
+            U = sqrtm((2*p_sds - np.eye(2*ising_size))
+                      @ (2*p_s - np.eye(2*ising_size)))
+
+            Uq = (e_sds.T.conj() @ U @ e_s) @ Uq
+
+            if np.abs(s_p[i+1]-self.save_at[ctr]) < delta_s/2:
+                self.U_list[ctr] = Uq
+                if verbose:
+                    print("adiabatic unitary calculated and saved up to s =",
+                          format(self.save_at[ctr], '0.2f'),
+                          end='\x1b[1K\r')
+                ctr += 1
+        return self.U_list
+
+    def _get_hq(self, verbose=False):
+        if verbose:
+            print("calculating effective qubit hamiltonian")
+        for i, s in enumerate(self.save_at):
+            if verbose:
+                print("qubit hamiltonian calculated for point", i,
+                      end='\x1b[1K\r')
+            phi_x_vec = self.x_interp(s)
+            phi_z_vec = self.z_interp(s)
+            self.calculate_quantum(phi_x_vec, phi_z_vec)
+
+            h_0, h_tot = copy.deepcopy(self.get_hams())
+            eff_v = copy.deepcopy(self.u_sw.T.conj() @ self.v_0)
+            h_q = eff_v.T.conj() @ h_tot @ eff_v
+            self.hq_list[i] = self.U_list[i] @ h_q @ self.U_list[i].T.conj()
+
+        return self.hq_list
+
+    def construct_adiabatic_schedules(self, phi_dict,
+                                      save_at=None,
+                                      delta_s=1e-3,
+                                      verbose=False):
+
+        self._initialize_adiabatic(phi_dict, save_at=save_at)
+        _ = self._get_Uad(delta_s=delta_s, verbose=verbose)
+        _ = self._get_hq(verbose=verbose)
+        return None
+
+    def get_ising_ad(self, index_list):
+        pauli_list = [0 for i in range(self.total_elements)]
+        for index, i in enumerate(self.qubit_indices):
+            pauli_list[i] = self.low_pauli_dict_s1["pauli_"+str(i)][index_list[index]]
+        for i in self.coupler_indices:
+            pauli_list[i] = self.low_p0_dict_s1["p0_"+str(i)]
+
+        pauli_operator = multi_krond(pauli_list)
+        pauli_operator = self.v_0_s1.T.conj() @ pauli_operator @ self.v_0_s1
+
+        ising_size = 2**len(self.qubit_indices)
+        ising_list = np.zeros(len(self.save_at))
+        for i, s in enumerate(self.save_at):
+            ising_list[i] = np.trace(self.hq_list[i] @ pauli_operator).real/ising_size
+        return ising_list[::-1]
+
+    def _get_eff_h(self, s1, s2, ta):
+        # calculates the effective H due to rotations
+        # gives U^dot^dagget @ U, calculated between s1 and s2
+        phi_x_vec = self.x_interp(s1)
+        phi_z_vec = self.z_interp(s1)
+        self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+        low_e_dict_1 = copy.deepcopy(self.low_e_dict)
+
+        # hamiltonian for mid-point, the unitary propagation will be more
+        # accurate later
+        phi_x_vec = self.x_interp((s1+s2)/2)
+        phi_z_vec = self.z_interp((s1+s2)/2)
+        # phi_x_vec = self.x_interp(s1)
+        # phi_z_vec = self.z_interp(s1)
+        self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+        h_tot = copy.deepcopy(self.get_hams()[1])
+        low_e_dict_mid = copy.deepcopy(self.low_e_dict)
+
+        phi_x_vec = self.x_interp(s2)
+        phi_z_vec = self.z_interp(s2)
+        self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+        low_e_dict_2 = copy.deepcopy(self.low_e_dict)
+
+        low_e_dict_2 = self._match_phase(low_e_dict_1, low_e_dict_2)
+        low_e_dict_mid = self._match_phase(low_e_dict_1, low_e_dict_mid)
+
+        udd_u_list = [0 for i in range(self.total_elements)]
+        udd_u_tot = 0
+        for i in range(self.total_elements):
+            # U dot below
+            ud = (low_e_dict_2["v_low_" + str(i)]
+                  - low_e_dict_1["v_low_" + str(i)])/(s2-s1)/ta
+            # u dot dagger below
+            udd = ud.T.conj()
+            # u dot dagger multiplied by u
+            udd_u = udd @ low_e_dict_mid["v_low_" + str(i)]
+            # make sure this is anti-hermitian, such that 1j*udd_u will be
+            # hermitian. It is required when step size is not adequately small
+            udd_u = (udd_u.T.conj()-udd_u)/2
+            udd_u_list[i] = sparse.csr_matrix(udd_u)
+            # identity for other subsystems
+            for j in np.delete(np.arange(self.total_elements), i):
+                udd_u_list[j] = sparse.identity(self.trunc_vec[j])
+
+            udd_u_tot = udd_u_tot + multi_krons(udd_u_list)
+
+        h_eff = h_tot + 1j*udd_u_tot
+        return h_eff
+
+    def evolve_se(self, phi_dict, tf, init_state, dt=1e-2, save_at=None):
+        t_list = np.linspace(0, tf, num=int(tf/dt))
+
+        if save_at is None:
+            s_list = np.linspace(0, 1, phi_dict["points"])
+        else:
+            s_list = save_at
+
+        self._initialize_se(phi_dict)
+
+        sol = np.zeros((len(s_list), self.nmax), dtype=complex)
+        state = init_state
+        sol[0] = state
+        ctr = 1
+        for i in range(len(t_list[:-1])):
+            s1 = t_list[i]/tf
+            s2 = t_list[i+1]/tf
+            # the method below uses mid-point for unitary propogation,
+            # it's more accurate
+            h_eff = self._get_eff_h(s1, s2, tf)
+            propagator = expm(-1j * h_eff * dt)
+            state = propagator @ state
+
+            if np.abs(t_list[i+1]/tf-s_list[ctr]) < dt/tf/2:
+                sol[ctr] = state
+                ctr += 1
+
+        return sol
+
+    def evolve_se_simple(self, phi_dict, tf, init_state, dt=1e-2, save_at=None):
+        t_list = np.linspace(0, tf, num=int(tf/dt))
+
+        if save_at is None:
+            s_list = np.linspace(0, 1, phi_dict["points"])
+        else:
+            s_list = save_at
+
+        self._initialize_se(phi_dict)
+
+        sol = np.zeros((len(s_list), self.nmax), dtype=complex)
+        state = init_state
+        sol[0] = state
+        ctr = 1
+        for i in range(len(t_list[:-1])):
+            # use mid-point for unitary propogation, it's more accurate
+            t_mid = (t_list[i] + t_list[i+1])/2
+            s_mid = t_mid/tf
+
+            phi_x_vec = self.x_interp(s_mid)
+            phi_z_vec = self.z_interp(s_mid)
+            self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+            h_tot = self.get_hams()[1]
+            state = expm(-1j * h_tot * dt) @ state
+
+            if np.abs(t_list[i+1]/tf-s_list[ctr]) < dt/tf/2:
+                sol[ctr] = state
+                ctr += 1
+
+        return sol
+
+    def evolve_se_fixed_chunk(self, phi_dict, tf, init_state, dt=1e-2,
+                              save_at=None,
+                              basis_s=np.linspace(0, 1, 5)):
+        t_list = np.linspace(0, tf, num=int(tf/dt))
+
+        if save_at is None:
+            s_list = np.linspace(0, 1, phi_dict["points"])
+        else:
+            s_list = save_at
+
+        self._initialize_se(phi_dict)
+
+        ham_basis_list = []
+        for i, s in enumerate(basis_s):
+            self.calculate_quantum(self.x_interp(s),
+                                   self.z_interp(s), sw=False)
+            ham_basis_list.append(copy.deepcopy(self.low_e_dict))
+
+        sol = np.zeros((len(s_list), self.nmax), dtype=complex)
+        state = init_state
+        sol[0] = state
+        ctr = 1
+        basis_ctr = 0
+        for i in range(len(t_list[:-1])):
+            # use mid-point for unitary propogation, it's more accurate
+            # result is the solution at t_list[i+1]
+            t_mid = (t_list[i] + t_list[i+1])/2
+            s_mid = t_mid/tf
+
+            if basis_s[basis_ctr] < s_mid < basis_s[basis_ctr + 1]:
+                pass
+            else:
+                state = self._rotate_state(state,
+                                           basis_s[basis_ctr],
+                                           basis_s[basis_ctr+1])
+                basis_ctr += 1
+                print(basis_ctr)
+
+            phi_x_vec = self.x_interp(s_mid)
+            phi_z_vec = self.z_interp(s_mid)
+            self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+            h_tot = self.get_hams(basis=ham_basis_list[basis_ctr])[1]
+            state = expm(-1j * h_tot * dt) @ state
+
+            if np.abs(t_list[i+1]/tf-s_list[ctr]) < dt/tf/2:
+                sol[ctr] = state
+                ctr += 1
+
+        return sol
+
+    def _rotate_state(self, state, s1, s2):
+        # rotate the state which is represented at s1 to a representation at s2
+        # the rotation is done using U^\dagger(s2) * U(s1) * |psi>
+        phi_x_vec = self.x_interp(s1)
+        phi_z_vec = self.z_interp(s1)
+        self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+        low_e_dict_1 = copy.deepcopy(self.low_e_dict)
+
+        phi_x_vec = self.x_interp(s2)
+        phi_z_vec = self.z_interp(s2)
+        self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+        low_e_dict_2 = copy.deepcopy(self.low_e_dict)
+
+        low_e_dict_2 = self._match_phase(low_e_dict_1, low_e_dict_2)
+
+        ud2_u1_list = [0 for i in range(self.total_elements)]
+        for i in range(self.total_elements):
+            # u^dagger u matrix for each subsystem
+            ud2_u1_sub = low_e_dict_2["v_low_" + str(i)].T.conj() \
+                         @ low_e_dict_1["v_low_" + str(i)]
+
+            # use singular value decomposition to find the closest unitary
+            v, _, wh = np.linalg.svd(ud2_u1_sub)
+            unitarized = v @ wh
+
+            ud2_u1_list[i] = unitarized
+
+            # This does not make sure the transformation is unitary
+            # ud2_u1_list[i] = ud2_u1_sub
+
+        ud2_u1 = multi_krond(ud2_u1_list)
+
+        rot_state = ud2_u1 @ state
+        return rot_state
+
+    def evolve_se_rot(self, phi_dict, tf, init_state, dt=1e-2, save_at=None):
+        t_list = np.linspace(0, tf, num=int(tf/dt))
+
+        if save_at is None:
+            s_list = np.linspace(0, 1, phi_dict["points"])
+        else:
+            s_list = save_at
+
+        self._initialize_se(phi_dict)
+
+        sol = np.zeros((len(s_list), self.nmax), dtype=complex)
+        state = init_state
+        sol[0] = state
+        ctr = 1
+        for i in range(len(t_list[:-1])):
+            s_1 = t_list[i]/tf
+            s_2 = t_list[i+1]/tf
+            s_mid = (s_1 + s_2)/2
+
+            # using mid-point for evolution
+            state = self._rotate_state(state, s_1, s_mid)
+
+            phi_x_vec = self.x_interp(s_mid)
+            phi_z_vec = self.z_interp(s_mid)
+            self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+            h_tot = self.get_hams()[1]
+            state = expm(-1j * h_tot * dt) @ state
+
+            state = self._rotate_state(state, s_mid, s_2)
+
+            # # first-order evolution
+            # phi_x_vec = self.x_interp(s_1)
+            # phi_z_vec = self.z_interp(s_1)
+            # self.calculate_quantum(phi_x_vec, phi_z_vec, sw=False)
+            # h_tot = self.get_hams()[1]
+            # state = expm(-1j * h_tot * dt) @ state
+            #
+            # state = self._rotate_state(state, s_1, s_2)
+
+            if np.abs(t_list[i+1]/tf-s_list[ctr]) < dt/tf/2:
+                state_save = self._rotate_state(state, s_2, s_list[ctr])
+                sol[ctr] = state_save
+                ctr += 1
+
+        return sol
