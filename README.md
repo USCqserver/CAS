@@ -28,4 +28,4 @@ The [examples/cas_paper](https://github.com/USCqserver/CAS/tree/master/docs/exam
 Fork the repo for yourself, create a branch associated to your specific issue on your forked repo, push your changes to that branch, and then create a pull request to be merged onto the main repo.
 
 ## Citation
-If you use this code in your research, please cite its paper as _citation goes here_.
+If you use this code in your research, please cite its paper.
