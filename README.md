@@ -1,7 +1,7 @@
 # CAS: Customized Annealing Schedules
 
 This is a repo for constructing customized annealing schedules for flux qubits.
-The paper at [link goes here]() details the theory and methods that were used in this codebase.
+The paper at [arXvi:2103.06461](https://arxiv.org/abs/2103.06461) details the theory and methods that were used in this codebase.
 
 ## Installation
 First clone the repo using `git clone` , which copies all the contents of this package into a directory on your system.
@@ -21,7 +21,7 @@ For larger circuits, the code uses a pairwise-SW approximation to find the circu
 
 ## Examples
 The [examples](https://github.com/USCqserver/CAS/tree/master/docs/examples) directory contains jupyter example notebooks that explain how different methods of the module are used.
-The [examples/cas_paper](https://github.com/USCqserver/CAS/tree/master/docs/examples/cas_paper) directory includes the notebooks that were used to make the figures and plots of the paper at [link goes here]().
+The [examples/cas_paper](https://github.com/USCqserver/CAS/tree/master/docs/examples/cas_paper) directory includes the notebooks that were used to make the figures and plots of the paper at [arXvi:2103.06461](https://arxiv.org/abs/2103.06461).
 
 
 ## Contributions
