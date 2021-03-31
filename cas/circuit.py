@@ -450,7 +450,7 @@ class AnnealingCircuit:
 
         return ising.real
 
-    def get_ising_sw(self, phi_dict, verbose=False, sparse_htot=True):
+    def get_ising_sw(self, phi_dict, verbose=False, sparse_htot=True, XX_YY=False):
         """Calculates the ising coefficients of the circuit along an anneal.
         Uses the full SW method.
 
@@ -494,6 +494,11 @@ class AnnealingCircuit:
             index_1 = np.argwhere(self.qubit_indices == index_of_coupled[1])[0, 0]
             self.ising_sw_dict["zz_" + str(index_0) + "," +
                                str(index_1)] = np.zeros(pts)
+            if XX_YY == True:
+                self.ising_sw_dict["xx_" + str(index_0) + "," +
+                                   str(index_1)] = np.zeros(pts)
+                self.ising_sw_dict["yy_" + str(index_0) + "," +
+                                   str(index_1)] = np.zeros(pts)
 
         # calculate the full SW
         for p in range(pts):
@@ -531,12 +536,17 @@ class AnnealingCircuit:
                 ising_index[index_0], ising_index[index_1] = 1, 1
                 self.ising_sw_dict["zz_" + str(index_0) + ',' + str(index_1)][p] = \
                     self.calculate_ising_sw(3 * ising_index)
+                if XX_YY == True:
+                    self.ising_sw_dict["xx_" + str(index_0) + ',' + str(index_1)][p] = \
+                        self.calculate_ising_sw(1 * ising_index)
+                    self.ising_sw_dict["yy_" + str(index_0) + ',' + str(index_1)][p] = \
+                        self.calculate_ising_sw(2 * ising_index)
 
         return copy.deepcopy(self.ising_sw_dict)
 
-    def get_ising_sw_all(self, phi_dict, verbose=False, sparse_htot=True):
+    def get_ising_sw_ho(self, phi_dict, verbose=False, sparse_htot=True):
         """Calculates all the ising coefficients of the circuit along an anneal.
-           Calculates XX, YY and ZZ coupling between any pair of qubits (even higher orders)
+           Calculates ZZ coupling between any pair of qubits including higher orders (ho)
         Uses the full SW method.
 
          Arguments
@@ -580,11 +590,6 @@ class AnnealingCircuit:
             index_1 = el[1]
             self.ising_all_sw_dict["zz_" + str(index_0) + "," +
                                        str(index_1)] = np.zeros(pts)
-            self.ising_all_sw_dict["xx_" + str(index_0) + "," +
-                                       str(index_1)] = np.zeros(pts)
-            self.ising_all_sw_dict["yy_" + str(index_0) + "," +
-                                       str(index_1)] = np.zeros(pts)
-
 
         # calculate the full SW
         for p in range(pts):
@@ -619,13 +624,6 @@ class AnnealingCircuit:
                 ising_index = np.zeros(len(self.qubit_indices), dtype=int)
                 #print(index_0, index_1, ising_index)
                 ising_index[index_0], ising_index[index_1] = 1, 1
-
-                self.ising_all_sw_dict["xx_" + str(index_0) + ',' + str(index_1)][p] = \
-                    self.calculate_ising_sw(1 * ising_index)
-
-                self.ising_all_sw_dict["yy_" + str(index_0) + ',' + str(index_1)][p] = \
-                    self.calculate_ising_sw(2 * ising_index)
-
 
                 self.ising_all_sw_dict["zz_" + str(index_0) + ',' + str(index_1)][p] = \
                     self.calculate_ising_sw(3 * ising_index)
@@ -999,7 +997,7 @@ class AnnealingCircuit:
 
         return ising.real
 
-    def _get_coupler_zz_pwsw(self, phi_dict, verbose=False):
+    def _get_coupler_zz_pwsw(self, phi_dict, verbose=False, XX_YY=False):
         """Calculates the ZZ interaction Ising coefficients between qubits using
         pair-wise Schrieffer-Wolff method.
 
@@ -1023,6 +1021,9 @@ class AnnealingCircuit:
         pts = phi_dict["points"]
         for i, coupler_index in enumerate(self.coupler_indices):
             zz_list = np.zeros(pts)
+            if XX_YY == True:
+                xx_list = np.zeros(pts)
+                yy_list = np.zeros(pts)
             if verbose:
                 print(
                     "calculating coupling strength for coupler",
@@ -1058,15 +1059,39 @@ class AnnealingCircuit:
                     3,
                     3,
                 )
+                if XX_YY == True:
+                    xx_list[p] = self._get_pwsw_coupling(
+                        index_of_coupled[0],
+                        coupler_index,
+                        index_of_coupled[1],
+                        phi_x_list,
+                        phi_z_list,
+                        1,
+                        1,
+                    )
+                    yy_list[p] = self._get_pwsw_coupling(
+                        index_of_coupled[0],
+                        coupler_index,
+                        index_of_coupled[1],
+                        phi_x_list,
+                        phi_z_list,
+                        2,
+                        2,
+                    )
 
             index_0 = np.argwhere(self.qubit_indices == index_of_coupled[0])[0, 0]
             index_1 = np.argwhere(self.qubit_indices == index_of_coupled[1])[0, 0]
             self.ising_pwsw_dict["zz_" + str(index_0) + ',' +
                                  str(index_1)] = zz_list
+            if XX_YY == True:
+                self.ising_pwsw_dict["xx_" + str(index_0) + ',' +
+                                     str(index_1)] = xx_list
+                self.ising_pwsw_dict["yy_" + str(index_0) + ',' +
+                                     str(index_1)] = yy_list
 
         return self.ising_pwsw_dict
 
-    def get_ising_pwsw(self, phi_dict, verbose=False):
+    def get_ising_pwsw(self, phi_dict, verbose=False, XX_YY = False):
         """Calculates all the Ising coefficients of the system using
         pair-wise Schrieffer-Wolff method.
 
@@ -1088,7 +1113,7 @@ class AnnealingCircuit:
              For each key there is an array of coefficients during the anneal.
          """
         self.ising_pwsw_dict = self._get_single_qubit_ising(phi_dict, verbose=verbose)
-        _ = self._get_coupler_zz_pwsw(phi_dict, verbose=verbose)
+        _ = self._get_coupler_zz_pwsw(phi_dict, verbose=verbose, XX_YY=XX_YY)
         self.ising_pwsw_dict["points"] = phi_dict["points"]
         return copy.deepcopy(self.ising_pwsw_dict)
 
