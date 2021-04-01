@@ -341,6 +341,41 @@ class CSFQ:
         m_right = eig_vecs @ np.diag(f_filter(eig_vals)) @ eig_vecs.conj().T
         return sparse.csr_matrix(m_right)
 
+    def get_phi_z_cutoff(self):
+        """Here we calculate the upper limit of phi_z above which
+        the first two eigenstates would be locailized in the same well
+        and the persistent currents in low energy subspace would have two lowest
+        eigenvalues with the same sign. Hence PC measurement would not be possible.
+        Refer to discussion on page 2 of arXiv:2103.06461v1"""
+
+        num_pts = 200
+        phix_val = 2*np.pi
+        """ We could take any value of phix_val in the flux qubit regime since
+             phix_val would not have any effect on get_phi_z_cutoff
+        """
+        phi_z_cutoff = None
+        phi_z_list = np.linspace(0.0, 0.05, num_pts)*2*np.pi
+        for (i,phiz_val) in enumerate(phi_z_list):
+            ham = self.get_h(phix_val, phiz_val)
+            ip  = self.get_ip(phix_val, phiz_val)
+            eign_e, eign_v = sprsalg.eigsh(ham, k=2, which="SA", v0=basis_vec(0, self.nmax))
+            sort_index = np.argsort(eign_e)
+            eign_e = eign_e[sort_index]
+            eign_v = eign_v[:, sort_index]
+            ip_low_e = eign_v.T.conj() @ ip @ eign_v
+            ip_low_e = (ip_low_e + ip_low_e.conj().T) / 2  # assure hermitianity
+            eig_vals, u_vec = np.linalg.eigh(ip_low_e)
+
+            if (np.sign(eig_vals[0])==np.sign(eig_vals[1])):
+                phi_z_cutoff = phiz_val
+                break
+
+        if phi_z_cutoff==None:
+            phi_z_cutoff = phi_z_list[-1]
+
+        return phi_z_cutoff
+
+
     def get_ising(self, phi_x, phi_z):
         """Calculates the Ising coefficients for single qubit.
         See arXiv:1912.00464 for more details.

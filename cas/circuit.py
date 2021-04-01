@@ -14,7 +14,7 @@ from scipy.linalg import sqrtm, expm
 import scipy.sparse.linalg as sprsalg
 from scipy import sparse, interpolate
 import lmfit
-
+from itertools import combinations
 from cas.utils import multi_krond, multi_krons, basis_vec, _b
 from cas.elements import CSFQ, Coupler
 from cas.utils import e_j, e_c, e_l
@@ -153,12 +153,15 @@ class AnnealingCircuit:
         for element in self.elements:
             element.re_init()
 
+        # create a list of tuples containing all possible qubit pairs
+        self.coupling_pairs = list(combinations(range(len(self.qubit_indices)),2))
         # define class attributes that can be calculated later
         self.low_e_dict = {}
         self.low_pauli_dict = {}
         self.low_p0_dict = {}
         self.hq = 0
         self.ising_sw_dict = {}
+        self.ising_all_sw_dict = {}
         self.ising_bo_dict = {}
         self.ising_pwsw_dict = {}
         self.custom_flux_num = {}
@@ -447,7 +450,7 @@ class AnnealingCircuit:
 
         return ising.real
 
-    def get_ising_sw(self, phi_dict, verbose=False, sparse_htot=True):
+    def get_ising_sw(self, phi_dict, verbose=False, sparse_htot=True, XX_YY=False):
         """Calculates the ising coefficients of the circuit along an anneal.
         Uses the full SW method.
 
@@ -472,7 +475,18 @@ class AnnealingCircuit:
              a dictionary of ising coefficients. Keys are "x_i", "z_i", and
              "zz_i,j", where i<j are indexes of qubits from 0 to len(qubit_indices)
              For each key there is an array of coefficients during the anneal.
+
+
+         Put a warning for the value of phi_z which is not allowed.
+             Uses CSFQ.get_phi_z_cutoff
+
          """
+        for (i,idx) in enumerate(self.qubit_indices):
+             phi_z_cutoff = self.elements[idx].get_phi_z_cutoff()
+             if abs(np.max(phi_dict["phiz_" + str(idx)]))> abs(phi_z_cutoff):
+                 warnings.warn("Maximum allowed Phi_z for qubit {0} is {1:.4f} x 2π".format(i,phi_z_cutoff/2/np.pi))
+
+
         pts = phi_dict["points"]
         phi_x_all = np.array(
             [phi_dict["phix_" + str(i)] for i in range(self.total_elements)]
@@ -491,6 +505,11 @@ class AnnealingCircuit:
             index_1 = np.argwhere(self.qubit_indices == index_of_coupled[1])[0, 0]
             self.ising_sw_dict["zz_" + str(index_0) + "," +
                                str(index_1)] = np.zeros(pts)
+            if XX_YY == True:
+                self.ising_sw_dict["xx_" + str(index_0) + "," +
+                                   str(index_1)] = np.zeros(pts)
+                self.ising_sw_dict["yy_" + str(index_0) + "," +
+                                   str(index_1)] = np.zeros(pts)
 
         # calculate the full SW
         for p in range(pts):
@@ -528,8 +547,111 @@ class AnnealingCircuit:
                 ising_index[index_0], ising_index[index_1] = 1, 1
                 self.ising_sw_dict["zz_" + str(index_0) + ',' + str(index_1)][p] = \
                     self.calculate_ising_sw(3 * ising_index)
+                if XX_YY == True:
+                    self.ising_sw_dict["xx_" + str(index_0) + ',' + str(index_1)][p] = \
+                        self.calculate_ising_sw(1 * ising_index)
+                    self.ising_sw_dict["yy_" + str(index_0) + ',' + str(index_1)][p] = \
+                        self.calculate_ising_sw(2 * ising_index)
 
         return copy.deepcopy(self.ising_sw_dict)
+
+    def get_ising_sw_ho(self, phi_dict, verbose=False, sparse_htot=True):
+        """Calculates all the ising coefficients of the circuit along an anneal.
+           Calculates ZZ coupling between any pair of qubits including higher orders (ho)
+        Uses the full SW method.
+
+         Arguments
+         ---------
+         phi_dict : dictionary
+             a dictionary of circuit fluxes. Keys are "phix_i" and "phiz_i" where
+             i is the index of the circuit element. for each key there's an array
+             of circuit fluxes during the anneal.
+         verbose : bool
+             whether to show the progress or not.
+             default : False
+        sparse_htot : bool
+            Whether to calculate eigenvectors of h_tot using sparse matrix
+            or dense. For some geometries sparse fails, example is
+            FM triangle with the same parameters (degenerate)
+            default is True
+
+         Returns
+         -------
+         ising_sw_dict : dictionary
+             a dictionary of ising coefficients. Keys are "x_i", "z_i",
+             "xx_i,j", "yy_i,j", "zz_i,j", where i<j are indexes of qubits from 0 to len(qubit_indices)
+             For each key there is an array of coefficients during the anneal.
+
+         Put a warning for the value of phi_z which is not allowed.
+         Uses CSFQ.get_phi_z_cutoff
+
+         """
+        for (i,idx) in enumerate(self.qubit_indices):
+            phi_z_cutoff = self.elements[idx].get_phi_z_cutoff()
+            if abs(np.max(phi_dict["phiz_" + str(idx)]))> abs(phi_z_cutoff):
+                warnings.warn("Maximum allowed Phi_z for qubit {0} is {1:.4f} x 2π".format(i,phi_z_cutoff/2/np.pi))
+
+
+        pts = phi_dict["points"]
+        phi_x_all = np.array(
+            [phi_dict["phix_" + str(i)] for i in range(self.total_elements)]
+        )
+        phi_z_all = np.array(
+            [phi_dict["phiz_" + str(i)] for i in range(self.total_elements)]
+        )
+        # create the empty dictionary
+        self.ising_all_sw_dict["points"] = pts
+        for i in range(len(self.qubit_indices)):
+            self.ising_all_sw_dict["x_" + str(i)] = np.zeros(pts)
+            self.ising_all_sw_dict["z_" + str(i)] = np.zeros(pts)
+
+
+        for (i,el) in enumerate(self.coupling_pairs):
+            index_0 = el[0]
+            index_1 = el[1]
+            self.ising_all_sw_dict["zz_" + str(index_0) + "," +
+                                       str(index_1)] = np.zeros(pts)
+
+        # calculate the full SW
+        for p in range(pts):
+            if verbose:
+                print(
+                    "Calculating full SW for schedule point",
+                    p + 1,
+                    "/",
+                    pts,
+                    end="\x1b[1K\r",
+                )
+
+            self.calculate_quantum(
+                phi_x_all[:, p], phi_z_all[:, p], sw=True, sparse_htot=sparse_htot
+            )
+            # save single qubit terms
+            for i in range(len(self.qubit_indices)):
+                ising_index = basis_vec(i, len(self.qubit_indices)).astype(int)
+                self.ising_all_sw_dict["x_" + str(i)][p] = self.calculate_ising_sw(
+                    1 * ising_index
+                )
+                self.ising_all_sw_dict["z_" + str(i)][p] = self.calculate_ising_sw(
+                    3 * ising_index
+                )
+
+            # save interaction terms
+
+            for (i,el) in enumerate(self.coupling_pairs):
+                index_0 = el[0]
+                index_1 = el[1]
+
+                ising_index = np.zeros(len(self.qubit_indices), dtype=int)
+                #print(index_0, index_1, ising_index)
+                ising_index[index_0], ising_index[index_1] = 1, 1
+
+                self.ising_all_sw_dict["zz_" + str(index_0) + ',' + str(index_1)][p] = \
+                    self.calculate_ising_sw(3 * ising_index)
+
+        return copy.deepcopy(self.ising_all_sw_dict)
+
+
 
     def _get_single_qubit_ising(self, phi_dict, verbose=False):
         """Calculates the ising coefficients for individual isolated qubits.
@@ -896,7 +1018,7 @@ class AnnealingCircuit:
 
         return ising.real
 
-    def _get_coupler_zz_pwsw(self, phi_dict, verbose=False):
+    def _get_coupler_zz_pwsw(self, phi_dict, verbose=False, XX_YY=False):
         """Calculates the ZZ interaction Ising coefficients between qubits using
         pair-wise Schrieffer-Wolff method.
 
@@ -920,6 +1042,9 @@ class AnnealingCircuit:
         pts = phi_dict["points"]
         for i, coupler_index in enumerate(self.coupler_indices):
             zz_list = np.zeros(pts)
+            if XX_YY == True:
+                xx_list = np.zeros(pts)
+                yy_list = np.zeros(pts)
             if verbose:
                 print(
                     "calculating coupling strength for coupler",
@@ -955,15 +1080,39 @@ class AnnealingCircuit:
                     3,
                     3,
                 )
+                if XX_YY == True:
+                    xx_list[p] = self._get_pwsw_coupling(
+                        index_of_coupled[0],
+                        coupler_index,
+                        index_of_coupled[1],
+                        phi_x_list,
+                        phi_z_list,
+                        1,
+                        1,
+                    )
+                    yy_list[p] = self._get_pwsw_coupling(
+                        index_of_coupled[0],
+                        coupler_index,
+                        index_of_coupled[1],
+                        phi_x_list,
+                        phi_z_list,
+                        2,
+                        2,
+                    )
 
             index_0 = np.argwhere(self.qubit_indices == index_of_coupled[0])[0, 0]
             index_1 = np.argwhere(self.qubit_indices == index_of_coupled[1])[0, 0]
             self.ising_pwsw_dict["zz_" + str(index_0) + ',' +
                                  str(index_1)] = zz_list
+            if XX_YY == True:
+                self.ising_pwsw_dict["xx_" + str(index_0) + ',' +
+                                     str(index_1)] = xx_list
+                self.ising_pwsw_dict["yy_" + str(index_0) + ',' +
+                                     str(index_1)] = yy_list
 
         return self.ising_pwsw_dict
 
-    def get_ising_pwsw(self, phi_dict, verbose=False):
+    def get_ising_pwsw(self, phi_dict, verbose=False, XX_YY = False):
         """Calculates all the Ising coefficients of the system using
         pair-wise Schrieffer-Wolff method.
 
@@ -983,9 +1132,17 @@ class AnnealingCircuit:
              a dictionary of ising coefficients. Keys are "x_i", "z_i",
              where i are indexes of qubits from 0 to len(qubit_indices)
              For each key there is an array of coefficients during the anneal.
+
+         Put a warning for the value of phi_z which is not allowed.
+         Uses CSFQ.get_phi_z_cutoff
          """
+        for (i,idx) in enumerate(self.qubit_indices):
+            phi_z_cutoff = self.elements[idx].get_phi_z_cutoff()
+            if abs(np.max(phi_dict["phiz_" + str(idx)]))> abs(phi_z_cutoff):
+                warnings.warn("Maximum allowed Phi_z for qubit {0} is {1:.4f} x 2π".format(i,phi_z_cutoff/2/np.pi))
+
         self.ising_pwsw_dict = self._get_single_qubit_ising(phi_dict, verbose=verbose)
-        _ = self._get_coupler_zz_pwsw(phi_dict, verbose=verbose)
+        _ = self._get_coupler_zz_pwsw(phi_dict, verbose=verbose, XX_YY=XX_YY)
         self.ising_pwsw_dict["points"] = phi_dict["points"]
         return copy.deepcopy(self.ising_pwsw_dict)
 
@@ -1774,6 +1931,7 @@ class AnnealingCircuit:
             ip_dict[str(i)] = multi_krons(prod_list)
 
         return [ip_dict[str(i)] for i in self.qubit_indices]
+
 
     def get_povms(self, delta_i=10):
         """Calculates POVM operator for measuring probability of right
