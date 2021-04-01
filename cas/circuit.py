@@ -475,7 +475,18 @@ class AnnealingCircuit:
              a dictionary of ising coefficients. Keys are "x_i", "z_i", and
              "zz_i,j", where i<j are indexes of qubits from 0 to len(qubit_indices)
              For each key there is an array of coefficients during the anneal.
+
+
+         Put a warning for the value of phi_z which is not allowed.
+             Uses CSFQ.get_phi_z_cutoff
+
          """
+        for (i,idx) in enumerate(self.qubit_indices):
+             phi_z_cutoff = self.elements[idx].get_phi_z_cutoff()
+             if abs(np.max(phi_dict["phiz_" + str(idx)]))> abs(phi_z_cutoff):
+                 warnings.warn("Maximum allowed Phi_z for qubit {0} is {1:.4f} x 2π".format(i,phi_z_cutoff/2/np.pi))
+
+
         pts = phi_dict["points"]
         phi_x_all = np.array(
             [phi_dict["phix_" + str(i)] for i in range(self.total_elements)]
@@ -570,7 +581,17 @@ class AnnealingCircuit:
              a dictionary of ising coefficients. Keys are "x_i", "z_i",
              "xx_i,j", "yy_i,j", "zz_i,j", where i<j are indexes of qubits from 0 to len(qubit_indices)
              For each key there is an array of coefficients during the anneal.
+
+         Put a warning for the value of phi_z which is not allowed.
+         Uses CSFQ.get_phi_z_cutoff
+
          """
+        for (i,idx) in enumerate(self.qubit_indices):
+            phi_z_cutoff = self.elements[idx].get_phi_z_cutoff()
+            if abs(np.max(phi_dict["phiz_" + str(idx)]))> abs(phi_z_cutoff):
+                warnings.warn("Maximum allowed Phi_z for qubit {0} is {1:.4f} x 2π".format(i,phi_z_cutoff/2/np.pi))
+
+
         pts = phi_dict["points"]
         phi_x_all = np.array(
             [phi_dict["phix_" + str(i)] for i in range(self.total_elements)]
@@ -1111,7 +1132,15 @@ class AnnealingCircuit:
              a dictionary of ising coefficients. Keys are "x_i", "z_i",
              where i are indexes of qubits from 0 to len(qubit_indices)
              For each key there is an array of coefficients during the anneal.
+
+         Put a warning for the value of phi_z which is not allowed.
+         Uses CSFQ.get_phi_z_cutoff
          """
+        for (i,idx) in enumerate(self.qubit_indices):
+            phi_z_cutoff = self.elements[idx].get_phi_z_cutoff()
+            if abs(np.max(phi_dict["phiz_" + str(idx)]))> abs(phi_z_cutoff):
+                warnings.warn("Maximum allowed Phi_z for qubit {0} is {1:.4f} x 2π".format(i,phi_z_cutoff/2/np.pi))
+
         self.ising_pwsw_dict = self._get_single_qubit_ising(phi_dict, verbose=verbose)
         _ = self._get_coupler_zz_pwsw(phi_dict, verbose=verbose, XX_YY=XX_YY)
         self.ising_pwsw_dict["points"] = phi_dict["points"]
@@ -1902,6 +1931,7 @@ class AnnealingCircuit:
             ip_dict[str(i)] = multi_krons(prod_list)
 
         return [ip_dict[str(i)] for i in self.qubit_indices]
+
 
     def get_povms(self, delta_i=10):
         """Calculates POVM operator for measuring probability of right
